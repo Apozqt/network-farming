@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network Farming</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            background-color: #f4f4f9;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        .container {
+            background-color: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            width: 350px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        h1 {
+            color: #333333;
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+
+        p {
+            font-size: 16px;
+            color: #555555;
+            margin: 10px 0;
+        }
+
+        span {
+            font-weight: bold;
+            color: #007bff;
+        }
+
+        .loading {
+            font-style: italic;
+            color: #999999;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        .loading {
+            animation: pulse 1.5s infinite;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Network Farming Stats</h1>
+        <p>Unused Bandwidth: <span id="unused-bandwidth" class="loading">Loading...</span></p>
+        <p>Threshold: <span id="threshold" class="loading">Loading...</span></p>
+        <p>Earned Points: <span id="earned-points" class="loading">Loading...</span></p>
+        <p>Total Points: <span id="total-points" class="loading">Loading...</span></p>
+    </div>
+
+    <script>
+        async function fetchStats() {
+            try {
+                const response = await fetch('/stats');
+                const data = await response.json();
+
+                document.getElementById('unused-bandwidth').innerText = data.unused_bandwidth || 0;
+                document.getElementById('threshold').innerText = data.threshold || 0;
+                document.getElementById('earned-points').innerText = data.earned_points || 0;
+                document.getElementById('total-points').innerText = data.total_points || 0;
+
+                document.querySelectorAll('.loading').forEach(el => el.classList.remove('loading'));
+            } catch (error) {
+                console.error('Error fetching stats:', error);
+            }
+        }
+
+        setInterval(fetchStats, 5000);
+        window.onload = fetchStats;
+    </script>
+</body>
+</html>
