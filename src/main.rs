@@ -83,32 +83,11 @@ async fn connect_to_db() -> Result<tokio_postgres::Client, Error> {
         )
         .await?;
 
-    client
-        .execute(
-            "CREATE TABLE IF NOT EXISTS global_stats (
-                id SERIAL PRIMARY KEY,
-                total_points BIGINT NOT NULL
-            )",
-            &[],
-        )
-        .await?;
-
-    let row_count: i64 = client
-        .query_one("SELECT COUNT(*) FROM global_stats", &[])
-        .await?
-        .get(0);
-    if row_count == 0 {
-        client
-            .execute("INSERT INTO global_stats (total_points) VALUES (0)", &[])
-            .await?;
-    }
-
     Ok(client)
 }
 
 // Шаг 5: Добавление пользователя в базу данных
 async fn add_user(client: &tokio_postgres::Client, username: &str, points: i64) -> Result<(), Error> {
-    // Используем ON CONFLICT для игнорирования дубликатов
     client
         .execute(
             "INSERT INTO users (username, points) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING",
@@ -120,8 +99,24 @@ async fn add_user(client: &tokio_postgres::Client, username: &str, points: i64) 
     Ok(())
 }
 
-// Шаг 6: Мониторинг сетевого трафика и начисление поинтов
-async fn monitor_network(client: Arc<tokio_postgres::Client>, config: Arc<Mutex<NodeConfig>>) {
+// Шаг 6: Получение поинтов пользователя
+async fn get_user_points(client: &tokio_postgres::Client, username: &str) -> Result<i64, Error> {
+    let row = client
+        .query_one("SELECT points FROM users WHERE username = $1", &[&username])
+        .await?;
+    Ok(row.get(0))
+}
+
+// Шаг 7: Обновление поинтов пользователя
+async fn update_user_points(client: &tokio_postgres::Client, username: &str, points: i64) -> Result<(), Error> {
+    client
+        .execute("UPDATE users SET points = $1 WHERE username = $2", &[&points, &username])
+        .await?;
+    Ok(())
+}
+
+// Шаг 8: Мониторинг сетевого трафика и начисление поинтов
+async fn monitor_network(client: Arc<tokio_postgres::Client>, config: Arc<Mutex<NodeConfig>>, username: String) {
     let _system = System::new_all();
     let mut networks = Networks::new_with_refreshed_list();
     let mut previous_usage = NetworkUsage::new(&networks);
@@ -135,25 +130,28 @@ async fn monitor_network(client: Arc<tokio_postgres::Client>, config: Arc<Mutex<
 
         if unused_bandwidth > config.lock().unwrap().threshold {
             let threshold = config.lock().unwrap().threshold;
-            let earned_points = ((unused_bandwidth - threshold) as f64 / 1.5).floor() as i64; // Преобразуем в i64
+            let earned_points = ((unused_bandwidth - threshold) as f64 / 1.5).floor() as i64;
             let earned_points = earned_points.min(10);
 
-            client
-                .execute(
-                    "UPDATE global_stats SET total_points = total_points + $1",
-                    &[&earned_points],
-                )
+            // Получаем текущие поинты пользователя
+            let current_points = get_user_points(&client, &username)
                 .await
-                .expect("Failed to update total_points");
+                .unwrap_or(0);
+
+            // Обновляем поинты пользователя
+            let new_points = current_points + earned_points;
+            update_user_points(&client, &username, new_points)
+                .await
+                .expect("Failed to update user points");
 
             println!(
-                "Unused bandwidth: {}, Threshold: {}, Earned points: {}",
-                unused_bandwidth, threshold, earned_points
+                "User: {}, Unused bandwidth: {}, Threshold: {}, Earned points: {}, Total points: {}",
+                username, unused_bandwidth, threshold, earned_points, new_points
             );
         } else {
             println!(
-                "Unused bandwidth: {}, Threshold: {}, Not enough traffic to earn points.",
-                unused_bandwidth, config.lock().unwrap().threshold
+                "User: {}, Unused bandwidth: {}, Threshold: {}, Not enough traffic to earn points.",
+                username, unused_bandwidth, config.lock().unwrap().threshold
             );
         }
 
@@ -161,30 +159,34 @@ async fn monitor_network(client: Arc<tokio_postgres::Client>, config: Arc<Mutex<
     }
 }
 
-// Шаг 7: Главная страница (HTML)
+// Шаг 9: Главная страница (HTML)
 async fn index() -> impl Responder {
     HttpResponse::Ok().body(include_str!("index.html"))
 }
 
-// Шаг 8: Получение статистики через API
-async fn get_stats(client: web::Data<Arc<tokio_postgres::Client>>, config: web::Data<Arc<Mutex<NodeConfig>>>) -> impl Responder {
+// Шаг 10: Получение статистики через API
+async fn get_stats(
+    client: web::Data<Arc<tokio_postgres::Client>>,
+    config: web::Data<Arc<Mutex<NodeConfig>>>,
+    username: web::Path<String>, // Получаем username из URL
+) -> impl Responder {
     let threshold = config.lock().unwrap().threshold;
 
-    let row = client
-        .query_one("SELECT total_points FROM global_stats LIMIT 1", &[])
+    // Получаем поинты пользователя
+    let total_points = get_user_points(&client, &username)
         .await
-        .expect("Failed to fetch total_points");
-    let total_points: i64 = row.get(0);
+        .unwrap_or(0);
 
+    // Разыменовываем username с помощью *
     HttpResponse::Ok().json(serde_json::json!({
-        "unused_bandwidth": 3072, // Примерное значение, можно заменить на реальное
+        "username": *username,
         "threshold": threshold,
         "earned_points": total_points / 2, // Примерное значение
         "total_points": total_points
     }))
 }
 
-// Шаг 9: Основной код приложения
+// Шаг 11: Основной код приложения
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let port = env::var("PORT")
@@ -194,23 +196,24 @@ async fn main() -> std::io::Result<()> {
 
     let client = Arc::new(connect_to_db().await.expect("Failed to connect to the database"));
 
+    let cli = Cli::parse();
+    let config = Arc::new(Mutex::new(NodeConfig { threshold: cli.threshold }));
+
     // Добавляем тестового пользователя (если нужно)
     add_user(&client, "testuser", 0)
         .await
         .expect("Failed to add user");
 
-    let cli = Cli::parse();
-    let config = Arc::new(Mutex::new(NodeConfig { threshold: cli.threshold }));
-
+    // Запускаем мониторинг трафика для конкретного пользователя
     let db_client_clone = Arc::clone(&client);
-    tokio::spawn(monitor_network(db_client_clone, config.clone()));
+    tokio::spawn(monitor_network(db_client_clone, config.clone(), "testuser".to_string()));
 
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(Arc::clone(&client)))
             .app_data(web::Data::new(config.clone()))
             .route("/", web::get().to(index))
-            .route("/stats", web::get().to(get_stats))
+            .route("/stats/{username}", web::get().to(get_stats)) // Маршрут для получения статистики
             .service(
                 actix_files::Files::new("/static", "./static").show_files_listing(),
             )

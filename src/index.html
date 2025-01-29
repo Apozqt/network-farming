@@ -6,89 +6,68 @@
     <title>Network Farming</title>
     <style>
         body {
-            font-family: 'Arial', sans-serif;
-            background-color: #f4f4f9;
+            font-family: Arial, sans-serif;
             margin: 0;
             padding: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
+            background-color: #f4f4f9;
+            color: #333;
         }
-
-        .container {
-            background-color: #ffffff;
-            border-radius: 12px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            width: 350px;
+        header {
+            background-color: #4CAF50;
+            color: white;
             padding: 20px;
             text-align: center;
         }
-
-        h1 {
-            color: #333333;
-            font-size: 24px;
-            margin-bottom: 20px;
+        main {
+            padding: 20px;
+            max-width: 600px;
+            margin: 0 auto;
         }
-
-        p {
+        form {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        input[type="text"] {
+            padding: 10px;
             font-size: 16px;
-            color: #555555;
-            margin: 10px 0;
+            border: 1px solid #ccc;
+            border-radius: 4px;
         }
-
-        span {
-            font-weight: bold;
-            color: #007bff;
+        button {
+            padding: 10px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
         }
-
-        .loading {
-            font-style: italic;
-            color: #999999;
+        button:hover {
+            background-color: #45a049;
         }
-
-        @keyframes pulse {
-            0%, 100% {
-                opacity: 1;
-            }
-            50% {
-                opacity: 0.5;
-            }
-        }
-
-        .loading {
-            animation: pulse 1.5s infinite;
+        .info {
+            margin-top: 20px;
+            font-size: 14px;
+            color: #666;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Network Farming Stats</h1>
-        <p>Unused Bandwidth: <span id="unused-bandwidth" class="loading">Loading...</span></p>
-        <p>Threshold: <span id="threshold" class="loading">Loading...</span></p>
-        <p>Earned Points: <span id="earned-points" class="loading">Loading...</span></p>
-        <p>Total Points: <span id="total-points" class="loading">Loading...</span></p>
-    </div>
-
-    <script>
-        async function fetchStats() {
-            try {
-                const response = await fetch('/stats');
-                const data = await response.json();
-
-                document.getElementById('unused-bandwidth').innerText = data.unused_bandwidth || 0;
-                document.getElementById('threshold').innerText = data.threshold || 0;
-                document.getElementById('earned-points').innerText = data.earned_points || 0;
-                document.getElementById('total-points').innerText = data.total_points || 0;
-
-                document.querySelectorAll('.loading').forEach(el => el.classList.remove('loading'));
-            } catch (error) {
-                console.error('Error fetching stats:', error);
-            }
-        }
-
-        setInterval(fetchStats, 5000);
-        window.onload = fetchStats;
-    </script>
+    <header>
+        <h1>Welcome to Network Farming</h1>
+        <p>Earn points by utilizing unused network bandwidth!</p>
+    </header>
+    <main>
+        <form action="/stats/{username}" method="get">
+            <label for="username">Enter your username:</label>
+            <input type="text" id="username" name="username" placeholder="Your username" required>
+            <button type="submit">View Stats</button>
+        </form>
+        <div class="info">
+            <p>This application monitors your unused network bandwidth and converts it into points.</p>
+            <p>Your points are stored in the database and can be viewed anytime by entering your username.</p>
+        </div>
+    </main>
 </body>
 </html>
