@@ -108,12 +108,15 @@ async fn connect_to_db() -> Result<tokio_postgres::Client, Error> {
 
 // Шаг 5: Добавление пользователя в базу данных
 async fn add_user(client: &tokio_postgres::Client, username: &str, points: i64) -> Result<(), Error> {
+    // Используем ON CONFLICT для игнорирования дубликатов
     client
         .execute(
-            "INSERT INTO users (username, points) VALUES ($1, $2)",
+            "INSERT INTO users (username, points) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING",
             &[&username, &points],
         )
         .await?;
+
+    println!("Attempted to add user '{}'.", username);
     Ok(())
 }
 
@@ -191,6 +194,7 @@ async fn main() -> std::io::Result<()> {
 
     let client = Arc::new(connect_to_db().await.expect("Failed to connect to the database"));
 
+    // Добавляем тестового пользователя (если нужно)
     add_user(&client, "testuser", 0)
         .await
         .expect("Failed to add user");
