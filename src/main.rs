@@ -3,7 +3,7 @@ use actix_files; // Для обслуживания статических фа�
 use clap::Parser;
 use serde::Deserialize;
 use sysinfo::{Networks, System}; // Для работы с сетевым трафиком
-use rusqlite::{params, Connection, Result}; // Для работы с SQLite
+use tokio_postgres::{NoTls, Error}; // Для работы с PostgreSQL
 use serde_json; // Для работы с JSON
 use tokio::time::sleep; // Для асинхронного ожидания
 use std::sync::{Arc, Mutex};
@@ -118,35 +118,56 @@ async fn get_stats(
     }))
 }
 
-// Шаг 7: Инициализация базы данных SQLite
-fn init_db(conn: &Connection) -> Result<()> {
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY,
-            username TEXT NOT NULL UNIQUE,
-            points INTEGER NOT NULL
-        )",
-        [],
-    )?;
-    Ok(())
+// Шаг 7: Подключение к базе данных PostgreSQL
+async fn connect_to_db() -> Result<tokio_postgres::Client, Error> {
+    // Получаем строку подключения из переменной окружения
+    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+
+    // Подключаемся к базе данных
+    let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+
+    // Запускаем задачу для обработки соединения
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("Connection error: {}", e);
+        }
+    });
+
+    // Создаем таблицу, если она не существует
+    client
+        .execute(
+            "CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE,
+                points BIGINT NOT NULL
+            )",
+            &[],
+        )
+        .await?;
+
+    Ok(client)
 }
 
 // Шаг 8: Добавление пользователя в базу данных
-fn add_user(conn: &Connection, username: &str, points: u64) -> Result<()> {
-    conn.execute(
-        "INSERT INTO users (username, points) VALUES (?1, ?2)",
-        params![username, points],
-    )?;
+async fn add_user(client: &tokio_postgres::Client, username: &str, points: i64) -> Result<(), Error> {
+    client
+        .execute(
+            "INSERT INTO users (username, points) VALUES ($1, $2)",
+            &[&username, &points],
+        )
+        .await?;
     Ok(())
 }
 
 // Шаг 9: Обновление поинтов пользователя в базе данных
 #[allow(dead_code)] // Подавляем предупреждение, если функция не используется
-fn update_points(conn: &Connection, username: &str, points: u64) -> Result<()> {
-    conn.execute(
-        "UPDATE users SET points = ?1 WHERE username = ?2",
-        params![points, username],
-    )?;
+async fn update_points(client: &tokio_postgres::Client, username: &str, points: i64) -> Result<(), Error> {
+    client
+        .execute(
+            "UPDATE users SET points = $1 WHERE username = $2",
+            &[&points, &username],
+        )
+        .await?;
     Ok(())
 }
 
@@ -159,17 +180,18 @@ async fn main() -> std::io::Result<()> {
         .parse::<u16>()
         .expect("PORT must be a number");
 
+    // Подключаемся к базе данных
+    let client = connect_to_db().await.expect("Failed to connect to the database");
+
+    // Добавляем тестового пользователя (если нужно)
+    add_user(&client, "testuser", 0)
+        .await
+        .expect("Failed to add user");
+
     // Инициализация CLI-аргументов
     let cli = Cli::parse();
     let config = Arc::new(Mutex::new(NodeConfig { threshold: cli.threshold }));
     let points = Arc::new(Mutex::new(0));
-
-    // Инициализация базы данных SQLite
-    let conn = Connection::open("users.db").expect("Failed to open database");
-    init_db(&conn).expect("Failed to initialize database");
-
-    // Добавляем тестового пользователя (если нужно)
-    add_user(&conn, "testuser", 0).expect("Failed to add user");
 
     // Запускаем мониторинг трафика
     tokio::spawn(monitor_network(config.clone(), points.clone()));
@@ -182,7 +204,7 @@ async fn main() -> std::io::Result<()> {
             .route("/", web::get().to(index))
             .route("/stats", web::get().to(get_stats)) // Маршрут для получения статистики
             .service(
-                actix_files::Files::new("/static", "./static").show_files_listing() // Статические файлы
+                actix_files::Files::new("/static", "./static").show_files_listing(), // Статические файлы
             )
     })
     .bind(("0.0.0.0", port))? // Привязываемся к порту из переменной окружения
