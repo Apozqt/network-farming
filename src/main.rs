@@ -7,6 +7,7 @@ use rusqlite::{params, Connection, Result}; // Для работы с SQLite
 use serde_json; // Для работы с JSON
 use tokio::time::sleep; // Для асинхронного ожидания
 use std::sync::{Arc, Mutex};
+use std::env; // Для работы с переменными окружения
 
 // Шаг 1: Определяем CLI-аргументы
 #[derive(Parser)]
@@ -61,7 +62,7 @@ impl NetworkUsage {
 
 // Шаг 4: Мониторинг сетевого трафика и начисление поинтов
 async fn monitor_network(config: Arc<Mutex<NodeConfig>>, points: Arc<Mutex<u64>>) {
-    let _system = System::new_all(); // Убираем mut и добавляем подчеркивание
+    let _system = System::new_all(); // Инициализация системы
     let mut networks = Networks::new_with_refreshed_list(); // Создаем объект Networks
     let mut previous_usage = NetworkUsage::new(&networks);
 
@@ -140,6 +141,7 @@ fn add_user(conn: &Connection, username: &str, points: u64) -> Result<()> {
 }
 
 // Шаг 9: Обновление поинтов пользователя в базе данных
+#[allow(dead_code)] // Подавляем предупреждение, если функция не используется
 fn update_points(conn: &Connection, username: &str, points: u64) -> Result<()> {
     conn.execute(
         "UPDATE users SET points = ?1 WHERE username = ?2",
@@ -151,6 +153,12 @@ fn update_points(conn: &Connection, username: &str, points: u64) -> Result<()> {
 // Шаг 10: Основной код приложения
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    // Получаем порт из переменной окружения или используем значение по умолчанию
+    let port = env::var("PORT")
+        .unwrap_or_else(|_| "8080".to_string()) // Используем 8080, если PORT не задан
+        .parse::<u16>()
+        .expect("PORT must be a number");
+
     // Инициализация CLI-аргументов
     let cli = Cli::parse();
     let config = Arc::new(Mutex::new(NodeConfig { threshold: cli.threshold }));
@@ -177,7 +185,7 @@ async fn main() -> std::io::Result<()> {
                 actix_files::Files::new("/static", "./static").show_files_listing() // Статические файлы
             )
     })
-    .bind("127.0.0.1:8080")?
+    .bind(("0.0.0.0", port))? // Привязываемся к порту из переменной окружения
     .run()
     .await
 }
